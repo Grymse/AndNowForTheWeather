@@ -1,18 +1,22 @@
 package main
 
 import (
-    "io"
-		"net/http"
-		"net/url"
 		"fmt"
+		"github.com/joho/godotenv"
+		"encoding/csv"
+		"bytes"
 		"os"
+		"time"
 )
 
-
-func check(e error) {
-	if e != nil {
-			panic(e)
+func loadEnvVariables() {
+	err := godotenv.Load(".env")
+	if err != nil {
+		fmt.Println("Error loading .env file")
+		panic(err)
 	}
+
+	return
 }
 
 var AREAS = []string{
@@ -23,73 +27,91 @@ var AREAS = []string{
 	"Fire Island",
 }
 
+
+
 func main() {
-	/* d1 := []byte("hello\ngo\n")
-	err := os.WriteFile("./dat1.csv", d1, 0644)
-	check(err) */
-
-	for _, area := range AREAS {
-		bytes, err := fetchForecastData(area);
-		if err != nil {
-			fmt.Println("Error fetching data for area " + area);
-			fmt.Println(err);
-			continue;
-		}
-		err = writeToFile(bytes, area + ".csv");
-		if err != nil {
-			fmt.Println("Error writing data for area " + area);
-			fmt.Println(err);
-			continue;
+	loadEnvVariables();
+	requester := GetAreaRequester(AREAS);
+	requester.passInformationIfFreshData();
+	for {
+		time.Sleep(time.Second * 5);
+		if requester.passInformationIfFreshData() {
+			break;
 		}
 	}
+
+	for {
+		timeBefore := time.Now().UnixMilli()
+		requester.passInformationIfFreshData();
+		timeAfter := time.Now().UnixMilli()
+		timeTaken := timeAfter - timeBefore
+		timeToSleep := 1800*1000 - timeTaken
+		time.Sleep(time.Millisecond * time.Duration(timeToSleep))
+	}
 }
 
-const API_ADDRESS = "https://incommodities.io/a"
-
-
-func writeToFile(data []byte, filename string) (err error) {
-	return os.WriteFile(filename, data, 0644);
+func (responses RequestResponse) IsSuccessful() bool {
+	return responses.err == nil && responses.statusCode == 200
 }
 
-/**
- * Fetch the forecast data for the given area
- * @param area The area to fetch data for
- * @return The forecast data
- */
+func (requester AreaRequester) passInformationIfFreshData() bool {
+	// FETCH DATA FROM API
+	responses := requester.RequestAreas()
 
-func fetchForecastData(area string) (data []byte, err error) {
-	params := []KeyValuePair{
-		KeyValuePair{Key: "area", Value: area},
+	fmt.Println("Attempt to pass information at " + time.Now().Format("2006-01-02 15:04:05"))
+
+	var containsAnyDifferentData = false
+	// COMPARE DATA TO DATA IN FILES
+	for _, response := range responses {
+		if !response.IsSuccessful() {continue;}
+		
+		// COMPARE DATA TO DATA IN FILES
+		data, err := os.ReadFile(getFilePath(response.area, "csv"));
+		if err != nil {
+			containsAnyDifferentData = true
+			break;
+		}
+
+		if !bytes.Equal(data, response.data) {
+			containsAnyDifferentData = true
+			break;
+		}
+	}
+	if !containsAnyDifferentData {return false;}
+
+	fmt.Println("Pass information to API");
+
+	// IF DATA IS NEW, DO REQUEST
+	for _, response := range responses {
+		go requester.attemptInformationPass(response)
 	}
 
-	return postRequest(API_ADDRESS, params);
+	return true;
 }
 
-/**
- * Post request to the given address with the given parameters
- * @param address The address to post to
- * @param params The parameters to post
- * @return The response body
- */
+func (requester AreaRequester) attemptInformationPass(response RequestResponse) {
+	area := response.area
+	data := response.data
 
-func postRequest(address string, params []KeyValuePair) (data []byte, err error) {
-	paramObject := url.Values{};
-	for _, param := range params {
-		paramObject.Add(param.Key, param.Value);
-	}
-	resp, err := http.PostForm(address, paramObject);
-
+	writeRawCSVFile(data, area)
+	reader := csv.NewReader(bytes.NewBuffer(data))
+	rows, err := reader.ReadAll()
 	if err != nil {
-		return []byte{}, err;
+		fmt.Println("Error converting to csv file for " + area)
+		return
 	}
 
-	defer resp.Body.Close();
-
-	body, err := io.ReadAll(resp.Body)
-
+	weatherData := CSVWeatherData(rows, area)
+	weatherDataRequest, statusCode, err := requester.PostAreaData(weatherData)
 	if err != nil {
-		return []byte{}, err;
+		fmt.Println("Error posting data for " + area)
+		return
 	}
 
-	return body, nil;
+	fmt.Print("completed ")
+	fmt.Print(string(area))
+	fmt.Print(" request with status code ")
+	fmt.Print(statusCode)
+	fmt.Print(" and data ")
+	fmt.Println(string(weatherDataRequest))
 }
