@@ -1,12 +1,13 @@
 package main
 
 import (
-		"fmt"
-		"github.com/joho/godotenv"
-		"encoding/csv"
-		"bytes"
-		"os"
-		"time"
+	"bytes"
+	"encoding/csv"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func loadEnvVariables() {
@@ -15,8 +16,6 @@ func loadEnvVariables() {
 		fmt.Println("Error loading .env file")
 		panic(err)
 	}
-
-	return
 }
 
 var AREAS = []string{
@@ -27,22 +26,20 @@ var AREAS = []string{
 	"Fire Island",
 }
 
-
-
 func main() {
-	loadEnvVariables();
-	requester := GetAreaRequester(AREAS);
-	requester.passInformationIfFreshData();
+	loadEnvVariables()
+	requester := GetAreaRequester(AREAS)
+	requester.passInformationIfFreshData()
 	for {
-		time.Sleep(time.Second * 5);
+		time.Sleep(time.Second * 5)
 		if requester.passInformationIfFreshData() {
-			break;
+			break
 		}
 	}
 
 	for {
 		timeBefore := time.Now().UnixMilli()
-		requester.passInformationIfFreshData();
+		requester.passInformationIfFreshData()
 		timeAfter := time.Now().UnixMilli()
 		timeTaken := timeAfter - timeBefore
 		timeToSleep := 1800*1000 - timeTaken
@@ -63,30 +60,35 @@ func (requester AreaRequester) passInformationIfFreshData() bool {
 	var containsAnyDifferentData = false
 	// COMPARE DATA TO DATA IN FILES
 	for _, response := range responses {
-		if !response.IsSuccessful() {continue;}
-		
+		if !response.IsSuccessful() {
+			continue
+		}
+
 		// COMPARE DATA TO DATA IN FILES
-		data, err := os.ReadFile(getFilePath(response.area, "csv"));
+		data, err := os.ReadFile(getFilePath(response.area, "csv"))
 		if err != nil {
 			containsAnyDifferentData = true
-			break;
+			break
 		}
 
 		if !bytes.Equal(data, response.data) {
+			fmt.Println("diff")
 			containsAnyDifferentData = true
-			break;
+			break
 		}
 	}
-	if !containsAnyDifferentData {return false;}
+	if !containsAnyDifferentData {
+		return false
+	}
 
-	fmt.Println("Pass information to API");
+	fmt.Println("Pass information to API")
 
 	// IF DATA IS NEW, DO REQUEST
 	for _, response := range responses {
 		go requester.attemptInformationPass(response)
 	}
 
-	return true;
+	return true
 }
 
 func (requester AreaRequester) attemptInformationPass(response RequestResponse) {
